@@ -3,7 +3,7 @@
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
-[Project Website](https://beckyvan156.github.io/BaLLM-final/) | [Paper (coming soon)]()
+[Project Website](https://cdc.biohpc.swmed.edu/ballm/intro) | [Paper (coming soon)]()
 
 ---
 
