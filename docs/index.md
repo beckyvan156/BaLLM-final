@@ -35,6 +35,7 @@ Large language models (Gemini, DeepSeek) are used to systematically extract gene
 | Strong         | 3     |
 | Moderate       | 2     |
 | Weak           | 1     |
+| No Evidence    | 0     |
 | Against        | -1    |
 
 ### Stage 2: Knowledge Graph Construction
@@ -55,10 +56,11 @@ The knowledge graph is built through a multi-stage LLM pipeline designed for acc
 
 1. **Gemini 1.5 Flash** answers a set of structured questions about each candidate gene-antibiotic relationship, producing an initial assessment of whether and how strongly a gene contributes to resistance.
 2. **DeepSeek** independently validates and scores each relationship, providing a second layer of evaluation.
-3. Evidence scores are reconciled into a final four-level classification:
+3. Evidence scores are reconciled into a final five-level classification:
    - **Strong** (score = 3) -- Consistent, well-established resistance mechanism
    - **Moderate** (score = 2) -- Supported by multiple studies but with some uncertainty
    - **Weak** (score = 1) -- Limited or indirect evidence of association
+   - **No Evidence** (score = 0) -- No literature evidence found linking the gene to resistance
    - **Against** (score = -1) -- Evidence suggests the gene does not contribute to resistance
 4. The final knowledge graph contains **2,598 gene-antibiotic associations** across 29 antibiotics.
 
@@ -138,7 +140,7 @@ For this application, where the predictor matrix consists of binary genotype ind
 
 ## Results
 
-BaLLM was validated on **six external datasets** to assess generalization performance: Shelburne, ARIsolateBank, CF, German, AstraZeneca, and Rabin.
+BaLLM was validated on **two external datasets** to assess generalization performance: Shelburne and ARIsolateBank.
 
 ### Highlights
 
