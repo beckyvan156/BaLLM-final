@@ -127,14 +127,10 @@ The [`results/KG model parameters/`](results/KG%20model%20parameters/) directory
 
 ## Datasets
 
-BaLLM was validated on six external datasets:
+BaLLM was trained on the NCBI Antibiogram dataset and externally validated on two independent datasets:
 
-- **Shelburne** -- Clinical isolates from MD Anderson Cancer Center
-- **ARIsolateBank** -- CDC Antibiotic Resistance Isolate Bank
-- **CF** -- Cystic fibrosis isolates
-- **German** -- German surveillance isolates
-- **AstraZeneca** -- Pharmaceutical clinical trial isolates
-- **Rabin** -- Rabin Medical Center isolates
+- **Bacteremia (Shelburne)** -- Bacteremia clinical isolates from hospitalized cancer patients (Shelburne et al.)
+- **ARIsolate (ARIsolateBank)** -- FDA--CDC Antimicrobial Resistance Isolate Bank; the only external cohort containing *Citrobacter freundii*, used for the underrepresented-pathogen case study
 
 ---
 
