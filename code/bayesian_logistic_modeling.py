@@ -21,6 +21,16 @@ import os
 import networkx as nx
 from sklearn.metrics import roc_curve, auc
 
+
+import matplotlib.patches as mpatches
+from matplotlib.patches import FancyArrowPatch
+
+import sys
+sys.path.append(r"C:\Users\becky\OneDrive - University of Texas Southwestern\LLM\code")
+from mcmc_diagnostics import nuts_diagnostics, metropolis_diagnostics
+DIAG_DIR = r"C:\Users\becky\OneDrive - University of Texas Southwestern\LLM\results\mcmc_diagnostics"
+
+
 ### input dataset ###
 final_kg=pd.read_csv('C:/Users/becky/OneDrive/Desktop/2023 summer intern/literature/CARD/results/final_kg.csv')
 antibiogram_gene=pd.read_csv('C:/Users/becky/OneDrive/Desktop/2023 summer intern/Data/purified_data/antibiogram_VAMP.csv')
@@ -88,8 +98,8 @@ for abx in final_kg['antibiotic'].unique():
 
 ##########################     Bayesian modeling    #############################
 
-# Step 1: Extract amikacin data
-df = bayes_df_dict['trimethoprim-sulfamethoxazole_bayes'].copy()
+# Step 1: Extract a specific antibiotic data
+df = bayes_df_dict['cefepime_bayes'].copy()
 
 # Step 2: Identify genes and prepare X and y
 non_gene_cols = ['sample_id', 'bacteria', 'phenotype']
@@ -112,7 +122,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 # Step 4: Build mu_dict from final_kg
 # Filter to antibiotic = "amikacin"
-final_kg_ami = final_kg[final_kg['antibiotic'] == 'trimethoprim-sulfamethoxazole']
+final_kg_ami = final_kg[final_kg['antibiotic'] == 'cefepime']
 mu_dict = dict(zip(final_kg_ami['gene'], final_kg_ami['Score']))
 
 # Only keep mu for genes in the training set
@@ -135,45 +145,6 @@ unique_mu = np.unique(mu)
 
 
 
-# # Step 5: PyMC model
-# tau = 1.0
-# delta = 1.0  # loosen delta
-
-# with pm.Model() as model:
-#     beta0 = pm.Normal("beta0", mu=0, sigma=5)
-
-#     # Step 1: Sample unordered values
-#     theta_group_unordered = pm.Normal("theta_group_unordered", mu=0, sigma=1, shape=len(unique_mu))
-
-#     # Step 2: Apply sort as deterministic
-#     ordered_theta = pm.Deterministic("ordered_theta", at.sort(theta_group_unordered))
-
-#     # Step 3: Noise + hierarchical indexing
-#     eps = pm.Normal("eps", mu=0, sigma=delta, shape=len(valid_genes_filtered))
-#     beta = pm.Deterministic("beta", mu + tau * (ordered_theta[group_idx] + eps))
-
-#     logits = beta0 + pm.math.dot(X_train_valid.values, beta)
-#     A_obs = pm.Bernoulli("A_obs", logit_p=logits, observed=y_train.values)
-
-#     trace = pm.sample(1000, tune=1000, target_accept=0.95, return_inferencedata=True)
-
-
-# # Step 6: Posterior Prediction
-# posterior_beta = trace.posterior["beta"].stack(draws=("chain", "draw")).values
-# posterior_beta0 = trace.posterior["beta0"].stack(draws=("chain", "draw")).values
-
-# logits_test = posterior_beta0 + X_test_valid.values @ posterior_beta
-# probs_test = 1 / (1 + np.exp(-logits_test))
-# P_test_mean = probs_test.mean(axis=1)
-
-# y_pred = (P_test_mean > 0.5).astype(int)
-
-# print("AUC:", roc_auc_score(y_test, P_test_mean))
-# print("Accuracy:", accuracy_score(y_test, y_pred))
-
-
-
-
 
 
 ### just fit a logistic regression using train data ###
@@ -186,7 +157,7 @@ coef = clf.coef_[0]
 intercept = clf.intercept_[0]
 
 
-### bayesian modeling tuning ###
+### NUTS: bayesian modeling tuning ###
 
 # 1. no constraint at all for beta #
 with pm.Model() as model:
@@ -201,6 +172,12 @@ with pm.Model() as model:
 
     # Sample
     trace = pm.sample(1000, tune=1000, target_accept=0.95, return_inferencedata=True)
+    
+    nuts_diagnostics(
+    trace,
+    model_name="nuts_m1_unconstrained",
+    var_names=["beta0", "beta"],
+    save_dir=DIAG_DIR,)
 
 
 posterior_beta = trace.posterior["beta"].stack(draws=("chain", "draw")).values
@@ -230,6 +207,12 @@ with pm.Model() as model:
 
     # Sample
     trace = pm.sample(1000, tune=1000, target_accept=0.95, return_inferencedata=True)
+    
+    nuts_diagnostics(
+    trace,
+    model_name="nuts_m2_llm_prior",
+    var_names=["beta0", "beta"],
+    save_dir=DIAG_DIR,)
 
 
 posterior_beta = trace.posterior["beta"].stack(draws=("chain", "draw")).values
@@ -246,40 +229,10 @@ print("Accuracy:", accuracy_score(y_test, y_pred))
 
 
 
-# 3. try other samplers with beta~N(mu,1)
-with pm.Model() as model:
-    # Intercept
-    beta0 = pm.Normal("beta0", mu=0, sigma=5)
 
-    # Coefficients: beta_j ~ N(mu_j, 1)
-    beta = pm.Normal("beta", mu=mu, sigma=1, shape=X_train_valid.shape[1])
-
-    # Logistic regression
-    logits = beta0 + pm.math.dot(X_train_valid.values, beta)
-    A_obs = pm.Bernoulli("A_obs", logit_p=logits, observed=y_train.values)
-
-    # Use Metropolis sampler
-    step = pm.Metropolis()
-    trace = pm.sample(1000, tune=1000, step=step, return_inferencedata=True)
-
-# Posterior prediction
-posterior_beta = trace.posterior["beta"].stack(draws=("chain", "draw")).values
-posterior_beta0 = trace.posterior["beta0"].stack(draws=("chain", "draw")).values
-
-# Predict on test set
-logits_test = posterior_beta0 + X_test_valid.values @ posterior_beta
-probs_test = 1 / (1 + np.exp(-logits_test))
-P_test_mean = probs_test.mean(axis=1)
-y_pred = (P_test_mean > 0.5).astype(int)
-
-print("AUC:", roc_auc_score(y_test, P_test_mean))
-print("Accuracy:", accuracy_score(y_test, y_pred))
-
-
-
-# 4. try other samplers with PyMC model
+# 3. full constraint model
 tau = 1.0
-delta = 1.0 
+delta = 2.5 
 
 with pm.Model() as model:
     beta0 = pm.Normal("beta0", mu=0, sigma=5)
@@ -298,8 +251,13 @@ with pm.Model() as model:
     A_obs = pm.Bernoulli("A_obs", logit_p=logits, observed=y_train.values)
 
     # Use Metropolis sampler
-    step = pm.Metropolis()
-    trace = pm.sample(1000, tune=1000, step=step, return_inferencedata=True)
+    trace = pm.sample(1000, tune=1000, target_accept=0.95,return_inferencedata=True)
+    
+    nuts_diagnostics(
+    trace,
+    model_name="nuts_m3_full_constraint",
+    var_names=["beta0", "theta_group_unordered", "eps", "beta"],
+    save_dir=DIAG_DIR,)
 
 
 # Posterior prediction
@@ -342,7 +300,7 @@ plt.show()
 
 
 
-######################   wrap up MH code as a function and save model parameters #############################
+######################   wrap up RWMH code as a function and save model parameters #############################
 
 # Step 1: Extract data
 df = bayes_df_dict['trimethoprim-sulfamethoxazole_bayes'].copy()
@@ -397,6 +355,41 @@ gene_strength.to_csv("trimethoprim-sulfamethoxazole_gene_strength.csv", index=Fa
 
 # # Load the parameter CSV
 # gene_strength = pd.read_csv("trimethoprim-sulfamethoxazole_gene_strength.csv")
+
+
+## save train and test dataset
+out_dir = r"C:\Users\becky\OneDrive - University of Texas Southwestern\LLM\data"
+os.makedirs(out_dir, exist_ok=True)  # create the folder if it doesn't exist
+
+sid = df['sample_id']  # index-aligned lookup source
+
+# labeled copies for export only (originals stay untouched for modeling)
+X_train_valid_labeled = X_train_valid.copy()
+X_train_valid_labeled.insert(0, 'sample_id', sid.loc[X_train_valid.index].values)
+
+X_test_valid_labeled = X_test_valid.copy()
+X_test_valid_labeled.insert(0, 'sample_id', sid.loc[X_test_valid.index].values)
+
+y_train_labeled = pd.DataFrame({
+    'sample_id': sid.loc[y_train.index].values,
+    'phenotype': y_train.values,
+}, index=y_train.index)
+
+y_test_labeled = pd.DataFrame({
+    'sample_id': sid.loc[y_test.index].values,
+    'phenotype': y_test.values,
+}, index=y_test.index)
+
+# save the labeled versions
+X_train_valid_labeled.to_csv(os.path.join(out_dir, 'X_train_valid_labeled.csv'), index=False)
+X_test_valid_labeled.to_csv(os.path.join(out_dir, 'X_test_valid_labeled.csv'), index=False)
+y_train_labeled.to_csv(os.path.join(out_dir, 'y_train_labeled.csv'), index=False)
+y_test_labeled.to_csv(os.path.join(out_dir, 'y_test_labeled.csv'), index=False)
+
+print("Saved to:", out_dir)
+
+
+
 
 
 ###  logistic regression  ###
@@ -466,6 +459,66 @@ np.savez("trimethoprim-sulfamethoxazole_posterior_params.npz", posterior_beta=po
 # y_pred = (P_test_mean > 0.5).astype(int)
 # print("AUC:", roc_auc_score(y_test, P_test_mean))
 # print("Accuracy:", accuracy_score(y_test, y_pred))
+
+import os
+
+out_dir = r"C:\Users\becky\OneDrive - University of Texas Southwestern\LLM\data"
+os.makedirs(out_dir, exist_ok=True)
+
+for key in bayes_df_dict.keys():
+    if not key.endswith("_bayes"):
+        continue  # skip keys that are not antibiotic_bayes format
+    abx = key.replace("_bayes", "")
+    print(f"Processing antibiotic: {abx}")
+    # Step 1: Extract data
+    df = bayes_df_dict[key].copy()
+    # Step 2: Identify genes and prepare X and y
+    non_gene_cols = ['sample_id', 'bacteria', 'phenotype']
+    gene_cols = [col for col in df.columns if col not in non_gene_cols]
+    X = df[gene_cols].astype(float)
+    y = df['phenotype'].astype(int)
+    # Remove constant columns
+    constant_columns = [col for col in X.columns if X[col].nunique() == 1]
+    X = X.drop(columns=constant_columns)
+    # Step 3: Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, stratify=y, random_state=42
+    )
+    # Step 4: Build mu_dict from final_kg
+    final_kg_filtered = final_kg[final_kg['antibiotic'] == abx]
+    mu_dict = dict(zip(final_kg_filtered['gene'], final_kg_filtered['Score']))
+    valid_genes = [g for g in gene_cols if g in mu_dict]
+    valid_genes_filtered = [g for g in valid_genes if g in X_train.columns]
+    X_train_valid = X_train[valid_genes_filtered]
+    X_test_valid = X_test[valid_genes_filtered]
+
+    # Step 5: Save labeled copies with sample_id (modeling frames stay untouched)
+    sid = df['sample_id']  # index-aligned lookup from this antibiotic's df
+
+    X_train_valid_labeled = X_train_valid.copy()
+    X_train_valid_labeled.insert(0, 'sample_id', sid.loc[X_train_valid.index].values)
+
+    X_test_valid_labeled = X_test_valid.copy()
+    X_test_valid_labeled.insert(0, 'sample_id', sid.loc[X_test_valid.index].values)
+
+    y_train_labeled = pd.DataFrame({
+        'sample_id': sid.loc[y_train.index].values,
+        'phenotype': y_train.values,
+    }, index=y_train.index)
+
+    y_test_labeled = pd.DataFrame({
+        'sample_id': sid.loc[y_test.index].values,
+        'phenotype': y_test.values,
+    }, index=y_test.index)
+
+    X_train_valid_labeled.to_csv(os.path.join(out_dir, f"{abx}_X_train_valid_labeled.csv"), index=False)
+    X_test_valid_labeled.to_csv(os.path.join(out_dir, f"{abx}_X_test_valid_labeled.csv"), index=False)
+    y_train_labeled.to_csv(os.path.join(out_dir, f"{abx}_y_train_labeled.csv"), index=False)
+    y_test_labeled.to_csv(os.path.join(out_dir, f"{abx}_y_test_labeled.csv"), index=False)
+
+
+
+
 
 
 
@@ -843,6 +896,235 @@ gene_order, stats = create_gene_strength_boxplot(posterior_beta, ordered_genes, 
 
 
 
+def shorten_gene_name(name):
+    """Keep only the first gene name if multiple genes are listed (comma or space separated)."""
+    # Split on comma first, then take first token
+    first = name.split(',')[0].strip()
+    # Also split on space in case genes are space-separated
+    first = first.split(' ')[0].strip()
+    return first
+ 
+ 
+def create_supp_fig3(save_dir=None):
+ 
+    # --- Load data ---
+    bayes = np.load(r"C:\Users\becky\OneDrive\Desktop\2023 summer intern\literature\CARD\results\KG model parameters\doripenem_posterior_params_2.5.npz")
+    posterior_beta = bayes["posterior_beta"]
+ 
+    gene_strength = pd.read_csv(r"C:\Users\becky\OneDrive\Desktop\2023 summer intern\literature\CARD\results\KG model parameters\doripenem_gene_strength.csv")
+    ordered_genes = gene_strength['gene'].tolist()
+ 
+    with open(r"C:\Users\becky\OneDrive\Desktop\2023 summer intern\literature\CARD\results\KG model parameters\doripenem_logistic_model.pkl", "rb") as f:
+        logistic_model = pickle.load(f)
+    logistic_beta = logistic_model.coef_[0]
+ 
+    # Load prior scores and merge
+    kg = pd.read_csv(r"C:\Users\becky\OneDrive\Desktop\2023 summer intern\literature\CARD\results\final_kg.csv")
+    dori_prior = kg[kg['antibiotic'] == 'doripenem'][['gene', 'Score']].set_index('gene')
+ 
+    # Load gene stats (has display names from KEGG mapping)
+    stats = pd.read_csv(r"C:\Users\becky\OneDrive\Desktop\2023 summer intern\literature\CARD\results\doripenem_gene_strength_stats.csv")
+    stats = stats.rename(columns={stats.columns[0]: 'display_name'})
+    stats = stats.merge(dori_prior, on='gene', how='left')
+ 
+    # Shorten display names
+    stats['display_name'] = stats['display_name'].apply(shorten_gene_name)
+ 
+    # Build long-form DataFrame for boxplots
+    gene_records = []
+    for i, gene in enumerate(ordered_genes):
+        display_name = stats.loc[stats['gene'] == gene, 'display_name'].values
+        score = stats.loc[stats['gene'] == gene, 'Score'].values
+        display_name = display_name[0] if len(display_name) > 0 else gene
+        score = score[0] if len(score) > 0 else np.nan
+        median_val = np.median(posterior_beta[i, :])
+        logistic_val = logistic_beta[i]
+        for val in posterior_beta[i, :]:
+            gene_records.append({
+                'gene': gene,
+                'display_name': display_name,
+                'value': val,
+                'median': median_val,
+                'logistic_beta': logistic_val,
+                'Score': score
+            })
+ 
+    df_long = pd.DataFrame(gene_records)
+ 
+    # --- Define merged panels ---
+    panels = [
+        {
+            'scores': [-1, 0, 1],
+            'label': 'Weak/no/against evidence\n(score \u2264 1)',
+            'color': '#5b9bd5',
+        },
+        {
+            'scores': [2],
+            'label': 'Moderate evidence\n(score = 2)',
+            'color': '#f4a261',
+        },
+        {
+            'scores': [3],
+            'label': 'Strong evidence\n(score = 3)',
+            'color': '#e63946',
+        },
+    ]
+ 
+    # Compute per-panel gene counts for proportional widths
+    panel_dfs = []
+    for p in panels:
+        sub = df_long[df_long['Score'].isin(p['scores'])]
+        order = (sub.groupby('display_name')['median']
+                    .median()
+                    .sort_values()
+                    .index.tolist())
+        panel_dfs.append((sub, order))
+ 
+    n_genes_per_panel = [len(order) for _, order in panel_dfs]
+    total_genes = sum(n_genes_per_panel)
+    width_ratios = [n / total_genes for n in n_genes_per_panel]
+ 
+    fig, axes = plt.subplots(
+        1, 3,
+        figsize=(18, 8),
+        gridspec_kw={'width_ratios': width_ratios, 'wspace': 0.05}
+    )
+ 
+    for idx, (ax, (sub, order), panel) in enumerate(zip(axes, panel_dfs, panels)):
+ 
+        if sub.empty:
+            ax.set_visible(False)
+            continue
+ 
+        # Boxplot
+        sns.boxplot(
+            data=sub, x='display_name', y='value',
+            order=order, ax=ax,
+            color=panel['color'],
+            width=0.6, linewidth=0.8,
+            flierprops=dict(marker='o', markersize=2, alpha=0.4,
+                            markerfacecolor=panel['color'], markeredgecolor='none')
+        )
+ 
+        # Logistic regression dots
+        logistic_ordered = [
+            sub[sub['display_name'] == g]['logistic_beta'].iloc[0]
+            for g in order
+        ]
+        ax.scatter(np.arange(len(order)), logistic_ordered,
+                   color='yellow', s=40, zorder=5,
+                   edgecolors='black', linewidths=0.5,
+                   label='Logistic Regression' if idx == 0 else '_nolegend_')
+ 
+        # Zero reference line
+        ax.axhline(0, color='red', linestyle='--', alpha=0.7, linewidth=1)
+ 
+        # Panel title
+        ax.set_title(panel['label'], fontsize=11, fontweight='bold',
+                     color=panel['color'], pad=8)
+ 
+        # X-axis labels
+        ax.set_xticks(np.arange(len(order)))
+        ax.set_xticklabels(order, rotation=90, ha='right',
+                           fontsize=7 if len(order) > 30 else 8.5)
+ 
+        ax.set_xlabel('')
+ 
+        # Shared y-axis: only show label and ticks on leftmost panel
+        if idx == 0:
+            ax.set_ylabel('Posterior Beta Value', fontsize=11)
+            ax.legend_ = None  # suppress default legend; we'll place it manually below
+        else:
+            ax.set_ylabel('')
+            ax.set_yticklabels([])
+ 
+        ax.grid(axis='y', alpha=0.3)
+ 
+        # Gene count annotation — centered at top of each panel
+        ax.text(0.5, 0.98, f'n = {len(order)} genes',
+                transform=ax.transAxes, ha='center', va='top',
+                fontsize=9, color='#555555',
+                bbox=dict(boxstyle='round,pad=0.3', fc='white',
+                          ec='#cccccc', alpha=0.8))
+ 
+    # Sync y-axis limits across all panels using absolute min/max
+    all_vals = df_long['value'].values
+    y_min = all_vals.min()
+    y_max = all_vals.max()
+    pad = (y_max - y_min) * 0.05
+    for ax in axes:
+        ax.set_ylim(y_min - pad, y_max + pad)
+ 
+    # Score explanation — dynamically aligned with panel title height
+    # Panel titles use pad=8 above axes top, so we draw after tight_layout
+    # to get accurate axes position in figure coordinates
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.88)
+ 
+    # Get the top of the rightmost axes in figure coordinates
+    fig.canvas.draw()
+    ax2_top = axes[2].get_position().y1
+    ax2_right = axes[2].get_position().x1
+ 
+    fig.text(
+        ax2_right + 0.01, ax2_top + 0.012,
+        'Score: LLM-informed prior score',
+        ha='left', va='center',
+        fontsize=8.5, fontweight='bold', color='#333333',
+        transform=fig.transFigure
+    )
+ 
+    # Logistic regression legend — same x anchor as score text, just below it
+    import matplotlib.lines as mlines
+    yellow_dot = mlines.Line2D([], [], color='yellow', marker='o', linestyle='None',
+                               markersize=6, markeredgecolor='black', markeredgewidth=0.5,
+                               label='Logistic Regression')
+    axes[2].legend(
+        handles=[yellow_dot],
+        loc='upper left',
+        bbox_to_anchor=(ax2_right + 0.01, ax2_top - 0.01),
+        bbox_transform=fig.transFigure,
+        fontsize=9, framealpha=0.9,
+        edgecolor='#cccccc',
+        borderaxespad=0,
+        handletextpad=0.5,
+        borderpad=0.4
+    )
+ 
+    fig.suptitle(
+        'Supplementary Figure 3. Posterior gene-resistance association strength from BaLLM\n'
+        'stratified by LLM-informed prior evidence level (doripenem)',
+        fontsize=13, fontweight='bold', y=1.02
+    )
+ 
+    fig.text(0.5, -0.02, 'Gene', ha='center', fontsize=12)
+ 
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(os.path.join(save_dir, "supp_fig3_posterior_by_prior_rank.png"),
+                    dpi=300, bbox_inches='tight')
+    plt.show()
+
+create_supp_fig3(save_dir=r"C:\Users\becky\OneDrive\Desktop\2023 summer intern\literature\CARD\results")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ##### table 1 accuracy plots #####
 data = {
@@ -873,6 +1155,168 @@ data = {
 
 # Create DataFrame
 df = pd.DataFrame(data)
+
+def create_individual_plots(df, save_dir=None):
+ 
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+ 
+    # ------------------------------------------------------------------ #
+    #  Supplementary Figure 1 — Delta plot: BaLLM (RWMH) vs Logistic     #
+    # ------------------------------------------------------------------ #
+    df_delta = df.copy()
+    df_delta['delta'] = df_delta['rwmh_full_constraint'] - df_delta['logistic_accuracy']
+    df_delta = df_delta.sort_values('delta', ascending=False).reset_index(drop=True)
+ 
+    deltas   = df_delta['delta'].values * 100
+    labels   = df_delta['antibiotic'].values
+    lr_vals  = df_delta['logistic_accuracy'].values * 100
+    bal_vals = df_delta['rwmh_full_constraint'].values * 100
+ 
+    NOISE_THRESHOLD = 0.05
+    bar_colors = [
+        '#fc8d59' if d > NOISE_THRESHOLD else
+        '#91bfdb' if d < -NOISE_THRESHOLD else
+        '#aaaaaa'
+        for d in deltas
+    ]
+ 
+    n_wins   = sum(1 for d in deltas if d >  NOISE_THRESHOLD)
+    n_ties   = sum(1 for d in deltas if abs(d) <= NOISE_THRESHOLD)
+    n_losses = sum(1 for d in deltas if d < -NOISE_THRESHOLD)
+ 
+    fig, ax = plt.subplots(figsize=(15, 6))
+    x_pos = np.arange(len(df_delta))
+ 
+    ax.bar(x_pos, deltas, color=bar_colors, edgecolor='white',
+           linewidth=0.6, zorder=3, width=0.7)
+ 
+    ax.axhline(0, color='#333333', linewidth=1.0, zorder=4)
+ 
+    legend_handles = [
+        mpatches.Patch(color='#fc8d59', label=f'BaLLM wins ({n_wins})'),
+        mpatches.Patch(color='#aaaaaa', label=f'No change ({n_ties})'),
+        mpatches.Patch(color='#91bfdb', label=f'BaLLM loses ({n_losses})'),
+    ]
+    ax.legend(handles=legend_handles, loc='upper right', fontsize=9,
+              framealpha=0.9, edgecolor='#cccccc')
+ 
+    ax.set_title('Supplementary Figure 1. Accuracy gain of BaLLM (RWMH) over Logistic Regression\n'
+                 'sorted by gain (high \u2192 low)',
+                 fontsize=13, fontweight='bold', pad=14)
+    ax.set_xlabel('Antibiotic', fontsize=11)
+    ax.set_ylabel('Accuracy difference (percentage points)', fontsize=11)
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8.5)
+    ax.set_ylim(-2.5, 10)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:+.1f}%'))
+    ax.grid(axis='y', alpha=0.3, zorder=1)
+    ax.set_xlim(-0.6, len(df_delta) - 0.4)
+ 
+    summary = (f'BaLLM outperforms on {n_wins}/29 antibiotics  |  '
+               f'No change on {n_ties}/29  |  Underperforms on {n_losses}/29')
+    ax.text(0.35, 0.98, summary, transform=ax.transAxes,
+            fontsize=8.5, va='top', color='#555555',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#cccccc', alpha=0.8))
+ 
+    plt.tight_layout()
+    if save_dir:
+        plt.savefig(os.path.join(save_dir, "supp_fig1_delta_rwmh_vs_logistic.png"),
+                    dpi=300, bbox_inches='tight')
+    plt.show()
+ 
+ 
+    # ------------------------------------------------------------------ #
+    #  Supplementary Figure 2 — NUTS failure vs RWMH stability           #
+    # ------------------------------------------------------------------ #
+ 
+    FAILURE_THRESHOLD_PP = 10.0
+    df_nuts = df.copy()
+    df_nuts['nuts_delta']  = (df_nuts['nuts_full_constraint'] - df_nuts['logistic_accuracy']) * 100
+    df_nuts['nuts_failed'] = df_nuts['nuts_delta'] < -FAILURE_THRESHOLD_PP
+ 
+    df_fail   = df_nuts[df_nuts['nuts_failed']].sort_values('nuts_full_constraint')
+    df_nofail = df_nuts[~df_nuts['nuts_failed']].sort_values('nuts_full_constraint', ascending=False)
+    df_sorted = pd.concat([df_fail, df_nofail]).reset_index(drop=True)
+ 
+    n_failed = df_nuts['nuts_failed'].sum()
+ 
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6),
+                             gridspec_kw={'width_ratios': [n_failed, len(df) - n_failed],
+                                          'wspace': 0.08})
+ 
+    for panel_idx, (ax, subset, title_suffix) in enumerate(zip(
+        axes,
+        [df_sorted[df_sorted['nuts_failed']], df_sorted[~df_sorted['nuts_failed']]],
+        [f'NUTS underperforms logistic regression by >10%  (n={n_failed})',
+         f'NUTS within 10% of logistic regression  (n={len(df)-n_failed})'],
+    )):
+        sub = subset.reset_index(drop=True)
+        xp  = np.arange(len(sub))
+ 
+        ax.plot(xp, sub['rwmh_full_constraint'] * 100,
+                color='#fc8d59', linewidth=2.2, marker='o', markersize=6,
+                label='BaLLM (RWMH)', zorder=5)
+ 
+        ax.plot(xp, sub['logistic_accuracy'] * 100,
+                color='#91cf60', linewidth=1.8, marker='s', markersize=5,
+                linestyle='--', alpha=1.0, label='Logistic Regression', zorder=4)
+ 
+        ax.plot(xp, sub['nuts_full_constraint'] * 100,
+                color='#91bfdb', linewidth=2.0, marker='^', markersize=6,
+                label='BaLLM (NUTS)', zorder=3)
+ 
+        ax.set_ylim(0, 110)
+        ax.set_xticks(xp)
+        ax.set_xticklabels(sub['antibiotic'], rotation=45, ha='right',
+                           fontsize=8 if panel_idx == 0 else 8.5)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:.0f}%'))
+        ax.grid(axis='y', alpha=0.3)
+        ax.set_title(title_suffix, fontsize=11, fontweight='bold', pad=8,
+                     color='#333333')
+ 
+        if panel_idx == 0:
+            ax.set_ylabel('Accuracy', fontsize=11)
+        else:
+            ax.set_yticklabels([])
+            ax.legend(loc='lower right', fontsize=9, framealpha=0.9,
+                      edgecolor='#cccccc')
+ 
+    fig.patches.append(
+        plt.matplotlib.patches.FancyArrowPatch(
+            posA=(0, 0), posB=(0, 1),
+            transform=axes[1].transAxes,
+            color='#bbbbbb', linewidth=1.5, linestyle='--',
+            arrowstyle='-', clip_on=False
+        )
+    )
+ 
+    fig.suptitle(
+        'Supplementary Figure 2. BaLLM (NUTS) vs BaLLM (RWMH)\n'
+        'under full LLM-informed prior constraints\n\n'
+        'Left: NUTS underperforms logistic regression by >10%  |  Right: stable cases',
+        fontsize=13, fontweight='bold', y=1.06
+    )
+ 
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.79)
+    if save_dir:
+        plt.savefig(os.path.join(save_dir, "supp_fig2_nuts_failure_vs_rwmh.png"),
+                    dpi=300, bbox_inches='tight')
+    plt.show()
+ 
+ 
+ 
+ 
+create_individual_plots(df, r"C:\Users\becky\OneDrive\Desktop\2023 summer intern\literature\CARD\results")
+
+
+
+
+
+
+
+
 
 # Sort by logistic regression accuracy for better visualization
 df = df.sort_values('logistic_accuracy').reset_index(drop=True)
@@ -1870,7 +2314,10 @@ card.columns = ['sample_id', 'antibiotics', 'phenotype']
 
 
 # Clean sample_id in shelburne_pheno by removing 'Enterobacter_' prefix
-shelburne_pheno['sample_id_clean'] = shelburne_pheno['sample_id'].str.replace('Enterobacter_', '', regex=False)
+shelburne_gene=pd.read_csv('C:/Users/becky/OneDrive/Desktop/2023 summer intern/Data/purified_data/Shelburne_VAMP.csv')
+shelburne_pheno=pd.read_csv('C:/Users/becky/OneDrive/Desktop/2023 summer intern/Data/purified_data/Shelburne_phenotype.csv')
+
+shelburne_pheno['sample_id_clean'] = shelburne_pheno['sample_id'].str.replace(r'^[^_]*_', '', regex=True)
 
 # Get unique combinations of sample_id and antibiotics from shelburne_pheno
 shelburne_combinations = shelburne_pheno[['sample_id_clean', 'antibiotics']].drop_duplicates()
@@ -1885,6 +2332,8 @@ card_filtered = card.merge(
 
 print(f"Original card dataset: {len(card)} rows")
 print(f"Filtered card dataset: {len(card_filtered)} rows")
+
+print(card_filtered['antibiotics'].unique())
 
 # Create a set of (sample_id, antibiotics) combinations that are predicted as resistant by CARD
 card_resistant_set = set(zip(card_filtered['sample_id'], card_filtered['antibiotics']))
@@ -1923,7 +2372,6 @@ for antibiotic in shelburne_pheno['antibiotics'].unique():
 results_df = pd.DataFrame(accuracy_results)
 results_df = results_df.sort_values('accuracy', ascending=False)
 print("\nAccuracy by Antibiotic:")
-print("=" * 80)
 print(results_df.to_string(index=False, float_format='%.3f'))
 
 
@@ -1987,6 +2435,79 @@ results_df = results_df.sort_values('accuracy', ascending=False)
 print("\nAccuracy by Antibiotic:")
 print("=" * 80)
 print(results_df.to_string(index=False, float_format='%.3f'))
+
+
+
+
+###############    VAMPr accuracy on the Shelburne dataset (for Table 3)  ##################
+# We compare VAMPr's predictions against the EXACT same Shelburne (sample_id, antibiotic)
+# pairs that were used to evaluate the logistic / BaLLM models above. Those pairs live in
+# `shelburne_bayes_df_dict` (built earlier from shelburne_pheno). The VAMPr result file keys
+# on the same sample_id (e.g. "Enterobacter_MB019") and antibiotic name, so we inner-join on
+# (sample_id, antibiotics) and score VAMPr's predicted phenotype against the true phenotype.
+#
+# Note: the VAMPr file does not contain every sample used in the code, so some pairs are
+# dropped when scoring VAMPr (reported per antibiotic as n_dropped):
+#   - Stenotrophomonas maltophilia isolates are absent from VAMPr entirely (1 per antibiotic).
+#   - For ciprofloxacin / levofloxacin the code uses only Pseudomonas aeruginosa isolates,
+#     but VAMPr did not predict those; overlap is 0, so VAMPr accuracy is undefined (NaN).
+#   - ceftazidime / piperacillin-tazobactam additionally drop ~13 Enterobacter cloacae isolates.
+
+# Load VAMPr predictions:  sample_id | group | antibiotics | predicted_pheno | P(resistant) | P(susceptible)
+vampr_pred = pd.read_csv(
+    r"C:\Users\becky\OneDrive - University of Texas Southwestern\LLM\results\Shelburne.VAMPr_predict_result.txt",
+    sep='\t', header=None,
+    names=['sample_id', 'group', 'antibiotics', 'vampr_pheno', 'p_resistant', 'p_susceptible']
+)
+# Encode VAMPr's predicted label to match the 0/1 phenotype encoding used above
+vampr_pred['vampr_pred'] = vampr_pred['vampr_pheno'].map({'resistant': 1, 'susceptible': 0})
+
+vampr_results = []
+
+for key in shelburne_bayes_df_dict.keys():
+    if not key.endswith("_bayes"):
+        continue
+    abx = key.replace("_bayes", "")
+
+    # The exact samples used in the code for this antibiotic (truth in 'phenotype', already 0/1)
+    used = shelburne_bayes_df_dict[key][['sample_id', 'phenotype']].drop_duplicates('sample_id')
+
+    # VAMPr predictions for this antibiotic
+    vampr_abx = vampr_pred[vampr_pred['antibiotics'] == abx][['sample_id', 'vampr_pred']]
+
+    # Match on the exact code-used samples
+    matched = used.merge(vampr_abx, on='sample_id', how='inner')
+
+    n_used = len(used)
+    n_matched = len(matched)
+    if n_matched == 0:
+        # No overlapping VAMPr predictions (e.g. ciprofloxacin / levofloxacin) -> undefined
+        acc = np.nan
+        pct_res = np.nan
+    else:
+        acc = accuracy_score(matched['phenotype'], matched['vampr_pred'])
+        pct_res = matched['phenotype'].mean() * 100
+
+    vampr_results.append({
+        'antibiotic': abx,
+        'n_used': n_used,
+        'n_matched': n_matched,
+        'n_dropped': n_used - n_matched,
+        '%_resistant_matched': pct_res,
+        'vampr_accuracy': acc,
+    })
+
+vampr_results_df = pd.DataFrame(vampr_results).sort_values('antibiotic').reset_index(drop=True)
+
+print("\nVAMPr Accuracy by Antibiotic (Shelburne, matched to code-used samples):")
+print("=" * 80)
+print(vampr_results_df.to_string(index=False, float_format='%.3f'))
+
+# Save for inclusion in Table 3
+vampr_results_df.to_csv(
+    r"C:\Users\becky\OneDrive - University of Texas Southwestern\LLM\results\Shelburne_VAMPr_accuracy_by_antibiotic.csv",
+    index=False
+)
 
 
 
