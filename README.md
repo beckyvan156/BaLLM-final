@@ -38,6 +38,7 @@ BaLLM/
 │   ├── neo4j.py                        # Neo4j graph database interface
 │   └── examples/
 │       └── load_and_run_model.ipynb    # Quick start notebook
+├── gemini_openai_prompt                # prompts used for gemini and openai
 ├── results/
 │   ├── final_kg.csv                    # Knowledge graph (2,598 associations)
 │   └── KG model parameters/            # Pre-trained model files (29 antibiotics)
