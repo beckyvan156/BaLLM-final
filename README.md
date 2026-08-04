@@ -77,7 +77,7 @@ results_df = evaluate_all_antibiotics(
 )
 ```
 
-**Sample output (Shelburne dataset):**
+**Sample output (bateremia dataset):**
 
 | Antibiotic | % Resistant | Logistic Acc. | Bayesian Acc. |
 |---|---|---|---|
