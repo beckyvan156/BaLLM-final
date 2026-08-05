@@ -11,7 +11,7 @@
 
 Antimicrobial resistance (AMR) is a growing global health crisis. Predicting antibiotic resistance from whole-genome sequencing (WGS) data is critical for clinical decision-making, but current approaches either rely on manually curated databases like CARD that miss novel resistance mechanisms, or use machine learning models that lack interpretability and biological grounding.
 
-BaLLM addresses this by combining large language models (LLMs) with Bayesian statistical modeling. First, LLMs (Gemini 1.5 Flash and DeepSeek) extract gene-antibiotic resistance associations from scientific literature, scoring each association as Strong, Moderate, Weak, or Against. These scores form a knowledge graph of 2,598 gene-antibiotic associations across 29 antibiotics. The knowledge graph then informs ordered priors in a Bayesian hierarchical logistic regression model, where genes with stronger evidence receive higher prior means.
+BaLLM addresses this by combining large language models (LLMs) with Bayesian statistical modeling. First, LLMs (Gemini 2.0 Flash and DeepSeek) extract gene-antibiotic resistance associations from scientific literature, scoring each association as Strong, Moderate, Weak, or Against. These scores form a knowledge graph of 2,598 gene-antibiotic associations across 29 antibiotics. The knowledge graph then informs ordered priors in a Bayesian hierarchical logistic regression model, where genes with stronger evidence receive higher prior means.
 
 On external validation datasets, BaLLM with RWMH sampling substantially outperforms standard logistic regression, achieving 84% accuracy vs 46% for cefepime and 85% vs 47% for meropenem on the Shelburne dataset.
 
